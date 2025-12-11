@@ -862,6 +862,11 @@ app.post('/api/login', async (req, res) => {
   }
 });
 
+// Verify token and return user role
+app.get('/api/verify-token', verifyToken, (req, res) => {
+  res.json({ valid: true, username: req.username, role: req.userRole });
+});
+
 // GET STATS
 app.get('/api/stats', verifyToken, (req, res) => {
   const stats = getUserStats(req.username);
