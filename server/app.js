@@ -17,7 +17,9 @@ const io = socketIo(server, {
   pingInterval: 25000,
   pingTimeout: 60000
 });
-const PORT = process.env.PORT || 5000;
+// Track connected socket users (socket.id -> username)
+let connectedUsers = {};
+const PORT = Number(process.env.PORT) || 5000;
 
 // In-memory caches for frequently accessed data
 const memoryCache = {
@@ -411,6 +413,33 @@ function loadPosts() {
 
 function savePosts(posts) {
   fs.writeFileSync(POSTS_FILE, JSON.stringify(posts, null, 2));
+}
+
+// Save image from data URL to public assets and validate basic constraints
+function saveImageFromData(imageData) {
+  if (!imageData || typeof imageData !== 'string' || !imageData.startsWith('data:')) {
+    throw new Error('Invalid image data');
+  }
+
+  const matches = imageData.match(/^data:(image\/\w+);base64,(.+)$/);
+  if (!matches) throw new Error('Unsupported image format');
+
+  const mime = matches[1];
+  const base64 = matches[2];
+  const allowed = ['image/png', 'image/jpeg', 'image/jpg', 'image/webp', 'image/gif'];
+  if (!allowed.includes(mime)) throw new Error('Unsupported image type');
+
+  const buffer = Buffer.from(base64, 'base64');
+  const MAX_BYTES = 2 * 1024 * 1024; // 2MB
+  if (buffer.length > MAX_BYTES) throw new Error('Image too large');
+
+  const ext = mime.split('/')[1] || 'png';
+  const filename = `post_${Date.now()}_${Math.random().toString(36).slice(2,8)}.${ext}`;
+  const imagesDir = path.join(__dirname, '../public/assets/images');
+  if (!fs.existsSync(imagesDir)) fs.mkdirSync(imagesDir, { recursive: true });
+  const filePath = path.join(imagesDir, filename);
+  fs.writeFileSync(filePath, buffer);
+  return `/assets/images/${filename}`;
 }
 
 // Chat Functions with auto-delete after 7 days
@@ -1737,6 +1766,11 @@ app.post('/api/play-game', verifyToken, (req, res) => {
       stats.balance = Math.max(0, stats.balance - 5);
     }
 
+    // Track trivia score separately for leaderboard aggregation
+    if (!stats.triviaScore) stats.triviaScore = 0;
+    // Only add positive points earned to triviaScore (penalties not counted)
+    stats.triviaScore += Math.max(0, pointsEarned);
+
     stats.lastGameTime = new Date().toISOString();
     saveUserStats(req.username, stats);
 
@@ -2098,27 +2132,124 @@ app.get('/api/posts', verifyToken, (req, res) => {
 app.post('/api/posts', verifyToken, (req, res) => {
   try {
     const user = getUserFromToken(req.headers.authorization);
-    const { content } = req.body;
-    
-    if (!content || !content.trim()) {
-      return res.status(400).json({ error: 'Post content cannot be empty' });
+    const { content, caption, imageData } = req.body;
+
+    if ((!content || !content.trim()) && !imageData && !caption) {
+      return res.status(400).json({ error: 'Post cannot be empty' });
     }
-    
+
     const posts = loadPosts();
-    posts.push({
+    const newPost = {
       id: Date.now().toString(),
       author: user.username,
-      role: user.role,
-      content: content.trim(),
-      createdAt: new Date().toISOString(),
+      role: (function(r){ if(!r) return 'general'; return r; })(user.role),
+      content: content ? content.trim() : '',
+      caption: caption ? caption.trim() : '',
+      image: null,
+      comments: [],
       likes: 0,
-      loves: 0
-    });
-    
+      loves: 0,
+      likedBy: [],
+      lovedBy: [],
+      createdAt: new Date().toISOString()
+    };
+
+    // Handle imageData (data URL) if provided with validation
+    if (imageData && typeof imageData === 'string' && imageData.startsWith('data:')) {
+      try {
+        newPost.image = saveImageFromData(imageData);
+      } catch (err) {
+        return res.status(400).json({ error: 'Invalid image: ' + err.message });
+      }
+    }
+
+    posts.push(newPost);
     savePosts(posts);
-    res.json({ success: true, posts });
+    // Broadcast new post to all connected clients
+    io.emit('newPost', newPost);
+
+    res.json({ success: true, post: newPost, posts });
   } catch (error) {
     res.status(500).json({ error: 'Failed to create post' });
+  }
+});
+
+// Update / edit existing post
+app.put('/api/posts/:id', verifyToken, (req, res) => {
+  try {
+    const user = getUserFromToken(req.headers.authorization);
+    const { content, caption, imageData } = req.body;
+
+    if ((!content || !content.trim()) && !imageData && !caption) {
+      return res.status(400).json({ error: 'Post cannot be empty' });
+    }
+
+    const posts = loadPosts();
+    const post = posts.find(p => p.id === req.params.id);
+    if (!post) return res.status(404).json({ error: 'Post not found' });
+
+    // Only author or admins/moderators can edit
+    const allowedEditors = ['system-admin', 'admin', 'moderator'];
+    if (post.author !== user.username && !allowedEditors.includes(user.role)) {
+      return res.status(403).json({ error: 'Not authorized to edit this post' });
+    }
+
+    post.content = content ? content.trim() : post.content;
+    post.caption = caption ? caption.trim() : post.caption;
+
+    if (imageData && typeof imageData === 'string' && imageData.startsWith('data:')) {
+      try {
+        const newImagePath = saveImageFromData(imageData);
+        // Optionally remove old image file if it exists under assets/images
+        try {
+          if (post.image && post.image.startsWith('/assets/images/')) {
+            const oldPath = path.join(__dirname, '../public', post.image.replace(/^\//, ''));
+            if (fs.existsSync(oldPath)) fs.unlinkSync(oldPath);
+          }
+        } catch (_) {}
+        post.image = newImagePath;
+      } catch (err) {
+        return res.status(400).json({ error: 'Invalid image: ' + err.message });
+      }
+    }
+
+    savePosts(posts);
+    // Broadcast updated post if needed
+    io.emit('postUpdated', post);
+    res.json({ success: true, post });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to update post' });
+  }
+});
+
+// Add comment to a post
+app.post('/api/posts/:id/comment', verifyToken, (req, res) => {
+  try {
+    const user = getUserFromToken(req.headers.authorization);
+    const { text } = req.body;
+    if (!text || !text.trim()) return res.status(400).json({ error: 'Comment cannot be empty' });
+
+    const posts = loadPosts();
+    const post = posts.find(p => p.id === req.params.id);
+    if (!post) return res.status(404).json({ error: 'Post not found' });
+
+    const comment = {
+      id: Date.now().toString(),
+      author: user.username,
+      text: text.trim(),
+      createdAt: new Date().toISOString()
+    };
+
+    post.comments = post.comments || [];
+    post.comments.push(comment);
+    savePosts(posts);
+
+    // Broadcast new comment to connected clients
+    io.emit('postComment', { postId: post.id, comment });
+
+    res.json({ success: true, comment, post });
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to add comment' });
   }
 });
 
@@ -2183,6 +2314,9 @@ app.post('/api/posts/:id/like', verifyToken, (req, res) => {
     post.loves = post.lovedBy.length;
     
     savePosts(posts);
+    // Broadcast like update so other clients can update counts
+    io.emit('postLiked', { postId: post.id, likes: post.likes, loves: post.loves, likedBy: post.likedBy || [], lovedBy: post.lovedBy || [] });
+
     res.json({ success: true, likes: post.likes, loves: post.loves });
   } catch (error) {
     res.status(500).json({ error: 'Failed to like post' });
@@ -2212,10 +2346,35 @@ app.get('/api/leaderboard', (req, res) => {
       const wins = stats.totalWins || 0;
       const winRate = games > 0 ? ((wins / games) * 100).toFixed(1) : 0;
       
-      // Calculate game score stats
-      const totalGameScore = stats.totalGameScore || 0;
-      const gamesPlayedTotal = stats.gamesPlayedTotal || 0;
-      const avgGameScore = gamesPlayedTotal > 0 ? (totalGameScore / gamesPlayedTotal).toFixed(1) : 0;
+        // Calculate game score stats
+          const totalGameScore = stats.totalGameScore || 0;
+          const gamesPlayedTotal = stats.gamesPlayedTotal || 0;
+          const avgGameScore = gamesPlayedTotal > 0 ? (totalGameScore / gamesPlayedTotal).toFixed(1) : 0;
+
+          // Compute per-game breakdown and Bible Games aggregate
+          const gameBreakdown = {};
+          const bibleGameTypes = new Set(['character', 'fillin', 'wordscramble', 'memory', 'wordsearch', 'puzzle', 'daily']);
+          let bibleGamesScore = 0;
+
+          if (stats.gameStats && typeof stats.gameStats === 'object') {
+            Object.entries(stats.gameStats).forEach(([gType, gStats]) => {
+              gameBreakdown[gType] = {
+                gamesPlayed: gStats.gamesPlayed || 0,
+                totalScore: gStats.totalScore || 0,
+                bestScore: gStats.bestScore || 0
+              };
+
+              if (bibleGameTypes.has(gType)) {
+                bibleGamesScore += (gStats.totalScore || 0);
+              }
+            });
+          }
+
+          // Trivia score (accumulated from trivia play points)
+          const triviaScore = stats.triviaScore || 0;
+
+          // Combined score = bible games + trivia
+          const combinedScore = bibleGamesScore + triviaScore;
       
       // Get church name - use stored church or default, normalized to title case
       const churchName = normalizeChurch(user.church);
@@ -2231,6 +2390,10 @@ app.get('/api/leaderboard', (req, res) => {
         totalGameScore: totalGameScore,
         gamesPlayedTotal: gamesPlayedTotal,
         avgGameScore: parseFloat(avgGameScore),
+        bibleGamesScore: bibleGamesScore,
+        triviaScore: triviaScore,
+        combinedScore: combinedScore,
+        gameBreakdown: gameBreakdown,
         joinDate: user.createdAt || new Date().toISOString(),
         rank: 0
       });
@@ -2262,6 +2425,8 @@ app.get('/api/leaderboard', (req, res) => {
         churchPlayers.sort((a, b) => b.winRate - a.winRate);
       } else if (sortBy === 'gameScore') {
         churchPlayers.sort((a, b) => b.totalGameScore - a.totalGameScore);
+      } else if (sortBy === 'combined') {
+        churchPlayers.sort((a, b) => (b.combinedScore || 0) - (a.combinedScore || 0));
       }
       
       // Add church header
@@ -2294,13 +2459,19 @@ app.get('/api/leaderboard', (req, res) => {
 app.get('/api/online-members', verifyToken, (req, res) => {
   try {
     const users = loadUsers();
+    const currentlyOnline = new Set(Object.values(connectedUsers || {}));
+
     const members = Object.entries(users).map(([username, user]) => ({
       name: username,
       role: user.role,
-      online: Math.random() > 0.5 // Simulated online status
-    })).slice(0, 10);
-    
-    res.json({ members });
+      church: normalizeChurch(user.church),
+      online: currentlyOnline.has(username)
+    }));
+
+    // Sort with online users first
+    members.sort((a, b) => (b.online === a.online) ? a.name.localeCompare(b.name) : (b.online ? 1 : -1));
+
+    res.json({ members: members.slice(0, 50) });
   } catch (error) {
     res.status(500).json({ error: 'Failed to load members' });
   }
@@ -2794,7 +2965,6 @@ app.get('/api/chat/typing/users', verifyToken, (req, res) => {
 });
 
 // Socket.IO connection handler with online status tracking
-let connectedUsers = {}; // Maps socket.id to username
 
 io.on('connection', (socket) => {
   console.log('User connected:', socket.id);

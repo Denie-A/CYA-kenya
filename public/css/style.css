@@ -196,21 +196,32 @@ body {
 
   min-height: 100vh;
   min-height: 100dvh;
-  display: flex;
-  justify-content: center;
-  align-items: center;
+  display: block;
   padding: 10px;
   overflow-x: hidden;
 }
 
 .container {
   width: 100%;
-  max-width: 900px;
+  max-width: 100%;
   max-height: 100vh;
   max-height: 100dvh;
   overflow-y: auto;
   -webkit-overflow-scrolling: touch;
   margin-top: 65px;
+}
+
+/* Dashboard-specific full-width adjustments */
+body.dashboard-page .container {
+  padding: 0;
+  margin-top: 65px;
+  max-width: 100%;
+}
+
+/* Remove body padding for dashboard to use full viewport width */
+body.dashboard-page {
+  padding: 0;
+  background: white !important;
 }
 
 /* Top Navigation - Game Page */

@@ -192,7 +192,7 @@
 
     .leaderboard-stats {
       display: grid;
-      grid-template-columns: repeat(4, 1fr);
+      grid-template-columns: repeat(6, 1fr);
       gap: 15px;
       text-align: center;
     }
@@ -216,6 +216,14 @@
       font-size: 16px;
     }
 
+    .stat .info {
+      margin-left: 8px;
+      font-size: 12px;
+      color: #666;
+      vertical-align: middle;
+      cursor: default;
+    }
+
     .stat-value.balance {
       color: #28a745;
     }
@@ -229,6 +237,31 @@
       padding: 50px;
       color: #666;
       font-size: 16px;
+    }
+
+    .breakdown {
+      background: #ffffff;
+      border-radius: 10px;
+      padding: 12px 14px;
+      box-shadow: 0 6px 18px rgba(0,0,0,0.06);
+    }
+
+    .breakdown table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+
+    .breakdown th, .breakdown td {
+      text-align: left;
+      padding: 6px 8px;
+      border-bottom: 1px solid #f0f0f0;
+    }
+
+    .breakdown .gtype {
+      font-weight: 700;
+      color: #333;
+      width: 35%;
     }
 
     .empty-state {
@@ -277,6 +310,7 @@
       }
 
       .rank-badge {
+        cursor: pointer;
         width: 50px;
         height: 50px;
         font-size: 18px;
@@ -294,7 +328,7 @@
 
       .leaderboard-stats {
         grid-column: 1 / -1;
-        grid-template-columns: repeat(4, 1fr);
+        grid-template-columns: repeat(3, 1fr);
         gap: 10px;
         margin-top: 12px;
         padding-top: 12px;
@@ -359,6 +393,9 @@
       </button>
       <button class="sort-btn" data-sort="gameScore" onclick="loadLeaderboard('gameScore', this)">
         <span>🎯</span> Top Game Score
+      </button>
+      <button class="sort-btn" data-sort="combined" onclick="loadLeaderboard('combined', this)">
+        <span>🔗</span> Combined Score
       </button>
       <button class="sort-btn" data-sort="games" onclick="loadLeaderboard('games', this)">
         <span>🎮</span> Most Games
@@ -485,7 +522,7 @@
         }
 
         html += `
-          <div class="leaderboard-item ${medalClass}">
+          <div class="leaderboard-item ${medalClass}" onclick="toggleBreakdown('breakdown-${player.username.replace(/[^a-zA-Z0-9_-]/g,'_')}')">
             <div class="rank-badge">${rankDisplay}</div>
             <div class="leaderboard-info">
               <h3>${player.username} ${player.churchRank === 1 ? crownBadge : ''}</h3>
@@ -505,10 +542,25 @@
                 <span class="stat-value">${player.avgGameScore}</span>
               </div>
               <div class="stat">
-                <span class="stat-label">Balance</span>
-                <span class="stat-value balance">$${player.balance.toFixed(0)}</span>
+                <span class="stat-label">Bible Games</span>
+                <span class="stat-value">${player.bibleGamesScore || 0}</span>
+              </div>
+              <div class="stat">
+                <span class="stat-label">Trivia Score</span>
+                <span class="stat-value">${player.triviaScore || 0}</span>
+              </div>
+              <div class="stat">
+                <span class="stat-label">Combined</span>
+                <span class="stat-value">${player.combinedScore || 0}</span>
+              </div>
+              <div class="stat">
+                <span class="stat-label">Balance <span class="info" title="Combined total = Trivia (earned points) + Bible Games total score">ℹ️</span></span>
+                <span class="stat-value balance" title="Combined total = Trivia (earned points) + Bible Games total score">$${typeof player.combinedScore === 'number' ? player.combinedScore.toFixed(0) : (player.combinedScore || 0)}</span>
               </div>
             </div>
+          </div>
+          <div id="breakdown-${player.username.replace(/[^a-zA-Z0-9_-]/g,'_')}" class="breakdown" style="display:none; margin-bottom:14px;">
+            ${renderBreakdownHTML(player.gameBreakdown)}
           </div>
         `;
         
@@ -521,6 +573,42 @@
     function toggleMobileMenu() {
       const mobileNav = document.getElementById('mobileNav');
       if (mobileNav) mobileNav.classList.toggle('active');
+    }
+
+    function renderBreakdownHTML(breakdown) {
+      if (!breakdown || Object.keys(breakdown).length === 0) {
+        return `<div style="padding:10px;color:#666">No game details available.</div>`;
+      }
+
+      let rows = `
+        <table>
+          <thead>
+            <tr><th>Game</th><th>Games Played</th><th>Total Score</th><th>Best</th></tr>
+          </thead>
+          <tbody>
+      `;
+
+      Object.entries(breakdown).forEach(([gType, g]) => {
+        rows += `<tr>
+          <td class="gtype">${gType}</td>
+          <td>${g.gamesPlayed}</td>
+          <td>${g.totalScore}</td>
+          <td>${g.bestScore}</td>
+        </tr>`;
+      });
+
+      rows += `</tbody></table>`;
+      return rows;
+    }
+
+    function toggleBreakdown(id) {
+      const el = document.getElementById(id);
+      if (!el) return;
+      el.style.display = (el.style.display === 'none' || el.style.display === '') ? 'block' : 'none';
+      // scroll into view when opened
+      if (el.style.display === 'block') {
+        el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      }
     }
 
     function logoutMobile() {

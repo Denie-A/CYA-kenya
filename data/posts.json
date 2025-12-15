@@ -6,6 +6,29 @@
     "content": "Welcome all",
     "createdAt": "2025-12-02T04:50:17.366Z",
     "likes": 0,
-    "loves": 0
+    "loves": 0,
+    "image": "/assets/images/post_1765796615139_p9xrtr.jpeg",
+    "comments": [
+      {
+        "id": "1765796638164",
+        "author": "deno",
+        "text": "Wow",
+        "createdAt": "2025-12-15T11:03:58.164Z"
+      }
+    ]
+  },
+  {
+    "id": "1765646194678",
+    "author": "dennis",
+    "role": "General Member",
+    "content": "hello",
+    "caption": "",
+    "image": null,
+    "comments": [],
+    "likes": 0,
+    "loves": 0,
+    "likedBy": [],
+    "lovedBy": [],
+    "createdAt": "2025-12-13T17:16:34.679Z"
   }
 ]

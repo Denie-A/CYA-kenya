@@ -50,6 +50,21 @@ const memberChurchs = {
     'general': 'General Member'
 };
 
+function getRoleLabel(role) {
+    if (!role) return memberChurchs['general'] || 'General Member';
+    if (memberChurchs[role]) return memberChurchs[role];
+    const r = role.toString().toLowerCase();
+    if (r.includes('system') && r.includes('admin')) return memberChurchs['system-admin'];
+    if (r.includes('admin')) return memberChurchs['admin'];
+    if (r.includes('moderator')) return memberChurchs['moderator'];
+    if (r.includes('chair')) return memberChurchs['chairperson'];
+    if (r.includes('vice')) return memberChurchs['vice-chair'];
+    if (r.includes('organizing')) return memberChurchs['organizing-secretary'];
+    if (r.includes('secretary')) return memberChurchs['secretary'];
+    if (r.includes('treasurer')) return memberChurchs['treasurer'];
+    return memberChurchs['general'] || role;
+}
+
 // Roles that can manage tasks, events, and announcements (admins and ministry leaders)
 const managementRoles = ['system-admin', 'admin', 'moderator', 'chairperson', 'secretary', 'organizing-secretary'];
 
@@ -607,32 +622,7 @@ async function loadPosts() {
             return;
         }
 
-        list.innerHTML = posts.map(post => {
-            const canDelete = post.author === currentUsername || ['system-admin', 'admin', 'moderator'].includes(userChurch);
-            const canEdit = post.author === currentUsername;
-            const deleteBtn = canDelete ? `<button class="btn-delete" onclick="deletePostPrompt('${post.id}')">Delete</button>` : '';
-            const editBtn = canEdit ? `<button class="btn-edit" onclick="editPost('${post.id}', '${escapeHtml(post.content)}')">Edit</button>` : '';
-            const userLikedIt = post.likedBy && post.likedBy.includes(`${currentUsername}:like`);
-            const userLovedIt = post.lovedBy && post.lovedBy.includes(`${currentUsername}:love`);
-            const actionButtons = editBtn || deleteBtn ? `<div class="card-actions">${editBtn}${deleteBtn}</div>` : '';
-            return `
-                <div class="post-item">
-                    <div class="post-header">
-                        <div>
-                            <span class="post-author">${escapeHtml(post.author)}</span>
-                            <span class="post-role">${memberChurchs[post.role] || post.role}</span>
-                        </div>
-                        <div class="post-date">${new Date(post.createdAt).toLocaleDateString()}</div>
-                    </div>
-                    <div class="post-content">${escapeHtml(post.content)}</div>
-                    <div class="post-reactions">
-                        <button class="post-reaction-btn ${userLikedIt ? 'active' : ''}" onclick="likePost('${post.id}', 'like')">👍 ${post.likes || 0}</button>
-                        <button class="post-reaction-btn ${userLovedIt ? 'active' : ''}" onclick="likePost('${post.id}', 'love')">❤️ ${post.loves || 0}</button>
-                        ${actionButtons}
-                    </div>
-                </div>
-            `;
-        }).join('');
+        list.innerHTML = posts.map(post => buildPostHTML(post)).join('');
     } catch (error) {
         console.error('Error loading posts:', error);
         document.getElementById('postsList').innerHTML = '<div class="empty-state">Error loading posts</div>';
@@ -686,6 +676,34 @@ async function likePost(id, type) {
     }
 }
 
+async function addComment(postId) {
+    const input = document.getElementById(`commentInput_${postId}`);
+    if (!input) return;
+    const text = input.value.trim();
+    if (!text) return showToast('Comment cannot be empty', 'error');
+
+    try {
+        const response = await fetch(`/api/posts/${postId}/comment`, {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json',
+                'Authorization': `Bearer ${authToken}`
+            },
+            body: JSON.stringify({ text })
+        });
+
+        const data = await response.json();
+        if (data.success) {
+            input.value = '';
+            loadPosts();
+        } else {
+            showToast(data.error || 'Failed to add comment', 'error');
+        }
+    } catch (err) {
+        showToast('Failed to add comment', 'error');
+    }
+}
+
 async function loadOnlineMembers() {
     const list = document.getElementById('membersList');
     
@@ -696,12 +714,16 @@ async function loadOnlineMembers() {
         
         if (response.ok) {
             const data = await response.json();
-            list.innerHTML = data.members.map(member => `
-                <div class="member-item ${member.online ? 'online' : ''}">
-                    <span class="member-status"></span>
-                    ${member.name}
-                </div>
-            `).join('');
+            membersListData = data.members || [];
+            renderMembersList();
+
+            // Ensure socket is initialized to receive realtime online updates
+            if (!socket) {
+                initializeSocket();
+                if (currentUsername) {
+                    setTimeout(() => socket.emit('authenticate', currentUsername), 500);
+                }
+            }
         }
     } catch (error) {
         list.innerHTML = `
@@ -729,26 +751,57 @@ let replyingToContent = null;
 // Socket.IO connection
 let socket = null;
 let onlineUsers = [];
+// Cached members list from API
+let membersListData = [];
+
+function renderMembersList() {
+    const list = document.getElementById('membersList');
+    if (!list) return;
+
+    const onlineSet = new Set(onlineUsers || []);
+    const online = membersListData.filter(m => (m.online === true) || onlineSet.has(m.name) || (m.name === currentUsername)).sort((a,b) => a.name.localeCompare(b.name));
+    const offline = membersListData.filter(m => !((m.online === true) || onlineSet.has(m.name) || (m.name === currentUsername))).sort((a,b) => a.name.localeCompare(b.name));
+
+    const renderMember = (m) => `\n                <div class="member-item ${((m.online === true) || onlineSet.has(m.name) || (m.name === currentUsername)) ? 'online' : 'offline'}">\n                    <span class="member-status"></span>\n                    <div class="member-meta">\n                        <div class="member-name">${escapeHtml(m.name)}</div>\n                        <div class="member-church">${escapeHtml(m.church || 'Unknown Church')}</div>\n                    </div>\n                </div>`;
+
+    let html = '';
+    html += '<div class="members-section"><div class="members-section-header">🟢 Online</div>';
+    html += online.length ? online.map(renderMember).join('') : '<div class="empty-state">No one online</div>';
+    html += '</div>';
+
+    html += '<div class="members-section"><div class="members-section-header">⚪ Offline</div>';
+    html += offline.length ? offline.map(renderMember).join('') : '<div class="empty-state">No offline members</div>';
+    html += '</div>';
+
+    list.innerHTML = html;
+}
 
 function initializeSocket() {
     if (socket) return;
     
     socket = io();
     
-    // Request initial online users list
-    socket.emit('requestOnlineUsers');
+    // On connect, authenticate and request initial online users list
+    socket.on('connect', () => {
+        if (currentUsername) {
+            socket.emit('authenticate', currentUsername);
+        }
+        socket.emit('requestOnlineUsers');
+    });
     
     // Real-time online users list
     socket.on('onlineUsers', (users) => {
-        onlineUsers = users.filter(u => u !== currentUsername);
+        onlineUsers = Array.isArray(users) ? users : [];
         renderOnlineUsers();
+        renderMembersList();
     });
     
     // User came online
     socket.on('userOnline', (username) => {
-        if (username !== currentUsername && !onlineUsers.includes(username)) {
+        if (!onlineUsers.includes(username)) {
             onlineUsers.push(username);
             renderOnlineUsers();
+            renderMembersList();
         }
     });
     
@@ -756,6 +809,7 @@ function initializeSocket() {
     socket.on('userOffline', (username) => {
         onlineUsers = onlineUsers.filter(u => u !== username);
         renderOnlineUsers();
+        renderMembersList();
     });
     
     // Real-time message listener - unified for all clients
@@ -812,7 +866,102 @@ function initializeSocket() {
         renderChatMessages();
     });
     
+    // Real-time posts
+    socket.on('newPost', (post) => {
+        // insert new post at top
+        insertPostAtTop(post);
+    });
+
+    socket.on('postLiked', (data) => {
+        // data: { postId, likes, loves, likedBy, lovedBy }
+        if (!data || !data.postId) return;
+        updatePostReactions(data.postId, data.likes || 0, data.loves || 0, data.likedBy || [], data.lovedBy || []);
+    });
+
+    socket.on('postComment', ({ postId, comment }) => {
+        if (!postId || !comment) return;
+        appendCommentToPost(postId, comment);
+    });
+    
     console.log('Socket.IO connected for real-time chat');
+}
+
+// Build HTML for a single post (used by loadPosts and real-time inserts)
+function buildPostHTML(post) {
+    const canDelete = post.author === currentUsername || ['system-admin', 'admin', 'moderator'].includes(userChurch);
+    const canEdit = post.author === currentUsername;
+    const deleteBtn = canDelete ? `<button class="btn-delete" onclick="deletePostPrompt('${post.id}')">Delete</button>` : '';
+    const editBtn = canEdit ? `<button class="btn-edit" onclick="editPost('${post.id}', '${escapeHtml(post.content)}')">Edit</button>` : '';
+    const userLikedIt = post.likedBy && post.likedBy.includes(`${currentUsername}:like`);
+    const userLovedIt = post.lovedBy && post.lovedBy.includes(`${currentUsername}:love`);
+    const actionButtons = editBtn || deleteBtn ? `<div class="card-actions">${editBtn}${deleteBtn}</div>` : '';
+
+    const imageHtml = post.image ? `<div class="post-image"><img src="${post.image}" alt="post image" /></div>` : '';
+    const captionHtml = post.caption ? `<div class="post-caption">${escapeHtml(post.caption)}</div>` : '';
+    const comments = (post.comments || []).slice(-5);
+    const commentsHtml = comments.length ? `<div class="post-comments">${comments.map(c => `<div class="comment-item"><strong>${escapeHtml(c.author)}</strong> ${escapeHtml(c.text)} <span class="comment-time">${new Date(c.createdAt).toLocaleString()}</span></div>`).join('')}</div>` : '';
+
+    return `
+        <div class="post-item" data-id="${post.id}">
+            <div class="post-header">
+                <div>
+                    <span class="post-author">${escapeHtml(post.author)}</span>
+                    <span class="post-role">${escapeHtml(getRoleLabel(post.role))}</span>
+                </div>
+                <div class="post-date">${new Date(post.createdAt).toLocaleDateString()}</div>
+            </div>
+            <div class="post-content">${escapeHtml(post.content)}</div>
+            ${imageHtml}
+            ${captionHtml}
+            <div class="post-reactions">
+                <button class="post-reaction-btn like-btn ${userLikedIt ? 'active' : ''}" onclick="likePost('${post.id}', 'like')">👍 ${post.likes || 0}</button>
+                <button class="post-reaction-btn love-btn ${userLovedIt ? 'active' : ''}" onclick="likePost('${post.id}', 'love')">❤️ ${post.loves || 0}</button>
+                ${actionButtons}
+            </div>
+            ${commentsHtml}
+            <div class="post-add-comment">
+                <input type="text" id="commentInput_${post.id}" placeholder="Write a comment..." />
+                <button class="btn btn-sm" onclick="addComment('${post.id}')">Comment</button>
+            </div>
+        </div>
+    `;
+}
+
+function insertPostAtTop(post) {
+    const container = document.getElementById('postsList');
+    if (!container) return;
+    container.insertAdjacentHTML('afterbegin', buildPostHTML(post));
+}
+
+function updatePostReactions(postId, likes, loves, likedBy = [], lovedBy = []) {
+    const postEl = document.querySelector(`.post-item[data-id="${postId}"]`);
+    if (!postEl) return;
+    const likeBtn = postEl.querySelector('.like-btn');
+    const loveBtn = postEl.querySelector('.love-btn');
+    if (likeBtn) {
+        likeBtn.innerHTML = `👍 ${likes}`;
+        if (Array.isArray(likedBy) && likedBy.includes(`${currentUsername}:like`)) likeBtn.classList.add('active'); else likeBtn.classList.remove('active');
+    }
+    if (loveBtn) {
+        loveBtn.innerHTML = `❤️ ${loves}`;
+        if (Array.isArray(lovedBy) && lovedBy.includes(`${currentUsername}:love`)) loveBtn.classList.add('active'); else loveBtn.classList.remove('active');
+    }
+}
+
+function appendCommentToPost(postId, comment) {
+    const postEl = document.querySelector(`.post-item[data-id="${postId}"]`);
+    if (!postEl) return;
+    let commentsContainer = postEl.querySelector('.post-comments');
+    const commentHtml = `<div class="comment-item"><strong>${escapeHtml(comment.author)}</strong> ${escapeHtml(comment.text)} <span class="comment-time">${new Date(comment.createdAt).toLocaleString()}</span></div>`;
+    if (commentsContainer) {
+        commentsContainer.insertAdjacentHTML('beforeend', commentHtml);
+    } else {
+        const node = document.createElement('div');
+        node.className = 'post-comments';
+        node.innerHTML = commentHtml;
+        const addCommentEl = postEl.querySelector('.post-add-comment');
+        postEl.insertBefore(node, addCommentEl);
+    }
 }
 
 function updateMessageReactions(messageId) {
@@ -852,13 +1001,17 @@ function renderOnlineUsers() {
         </div>
     `;
     
-    // Show other online users sorted alphabetically
-    const sortedUsers = onlineUsers.sort();
+    // Show other online users sorted alphabetically (exclude current user)
+    const sortedUsers = (onlineUsers || []).filter(u => u !== currentUsername).slice().sort();
     sortedUsers.forEach(username => {
+        // lookup church from cached members list
+        const member = (membersListData || []).find(m => m.name === username);
+        const church = member ? (member.church || 'Unknown Church') : 'Unknown Church';
         html += `
             <div class="online-user-item" title="${escapeHtml(username)} (Online)">
                 <span class="online-status"></span>
                 <span class="online-user-name">${escapeHtml(username)}</span>
+                <span class="online-user-church"> — ${escapeHtml(church)}</span>
             </div>
         `;
     });
@@ -1571,23 +1724,39 @@ function editPost(id, content) {
 
 async function createPost() {
     const content = document.getElementById('postContent').value.trim();
+    const caption = document.getElementById('postCaption') ? document.getElementById('postCaption').value.trim() : '';
+    const imageInput = document.getElementById('postImage');
+    const file = imageInput && imageInput.files && imageInput.files[0] ? imageInput.files[0] : null;
     const editId = document.getElementById('postEditId').value;
-    if (!content) {
-        showToast('Please write something to share', 'error');
+    if (!content && !file && !caption) {
+        showToast('Please write something or attach an image', 'error');
         return;
     }
     
     try {
         const url = editId ? `/api/posts/${editId}` : '/api/posts';
         const method = editId ? 'PUT' : 'POST';
-        
+        // If there's an image file, read it as data URL
+        let imageData = null;
+        if (file) {
+            imageData = await new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onload = () => resolve(reader.result);
+                reader.onerror = reject;
+                reader.readAsDataURL(file);
+            });
+        }
+
+        const body = { content, caption };
+        if (imageData) body.imageData = imageData;
+
         const response = await fetch(url, {
             method: method,
             headers: {
                 'Content-Type': 'application/json',
                 'Authorization': `Bearer ${authToken}`
             },
-            body: JSON.stringify({ content })
+            body: JSON.stringify(body)
         });
         
         const data = await response.json();
@@ -1595,10 +1764,17 @@ async function createPost() {
         if (data.success) {
             showToast(editId ? 'Post updated!' : 'Post shared!', 'success', 2000);
             document.getElementById('postContent').value = '';
+            if (document.getElementById('postCaption')) document.getElementById('postCaption').value = '';
+            if (document.getElementById('postImage')) document.getElementById('postImage').value = '';
             document.getElementById('postEditId').value = '';
             document.getElementById('postSubmitBtn').textContent = 'Post';
             document.getElementById('newPostForm').classList.add('hidden');
-            loadPosts();
+            // If server returned the created post, prepend it so image shows immediately
+            if (!editId && data.post) {
+                prependPost(data.post);
+            } else {
+                loadPosts();
+            }
         } else {
             showToast(data.error || 'Failed to save post', 'error');
         }
@@ -1612,6 +1788,59 @@ function cancelPost() {
     document.getElementById('postContent').value = '';
     document.getElementById('postEditId').value = '';
     document.getElementById('postSubmitBtn').textContent = 'Post';
+}
+
+// Render a single post as HTML (used to prepend newly created posts)
+function renderPostHtml(post) {
+    const canDelete = post.author === currentUsername || ['system-admin', 'admin', 'moderator'].includes(userChurch);
+    const canEdit = post.author === currentUsername;
+    const deleteBtn = canDelete ? `<button class="btn-delete" onclick="deletePostPrompt('${post.id}')">Delete</button>` : '';
+    const editBtn = canEdit ? `<button class="btn-edit" onclick="editPost('${post.id}', '${escapeHtml(post.content || '')}')">Edit</button>` : '';
+    const userLikedIt = post.likedBy && post.likedBy.includes(`${currentUsername}:like`);
+    const userLovedIt = post.lovedBy && post.lovedBy.includes(`${currentUsername}:love`);
+    const actionButtons = editBtn || deleteBtn ? `<div class="card-actions">${editBtn}${deleteBtn}</div>` : '';
+
+    const imageHtml = post.image ? `<div class="post-image"><img src="${post.image}" alt="post image"></div>` : '';
+    const captionHtml = post.caption ? `<div class="post-caption">${escapeHtml(post.caption)}</div>` : '';
+    const comments = (post.comments || []).slice(-5);
+    const commentsHtml = comments.length ? `<div class="post-comments">${comments.map(c => `<div class="comment-item"><strong>${escapeHtml(c.author)}</strong> ${escapeHtml(c.text)} <span class="comment-time">${new Date(c.createdAt).toLocaleString()}</span></div>`).join('')}</div>` : '';
+
+    return `
+        <div class="post-item" id="post_${post.id}" data-id="${post.id}">
+            <div class="post-header">
+                <div>
+                    <span class="post-author">${escapeHtml(post.author)}</span>
+                    <span class="post-role">${escapeHtml(getRoleLabel(post.role))}</span>
+                </div>
+                <div class="post-date">${new Date(post.createdAt).toLocaleDateString()}</div>
+            </div>
+            <div class="post-content">${escapeHtml(post.content || '')}</div>
+            ${imageHtml}
+            ${captionHtml}
+            <div class="post-reactions">
+                <button class="post-reaction-btn ${userLikedIt ? 'active' : ''}" onclick="likePost('${post.id}', 'like')">👍 ${post.likes || 0}</button>
+                <button class="post-reaction-btn ${userLovedIt ? 'active' : ''}" onclick="likePost('${post.id}', 'love')">❤️ ${post.loves || 0}</button>
+                ${actionButtons}
+            </div>
+            ${commentsHtml}
+            <div class="post-add-comment">
+                <input type="text" id="commentInput_${post.id}" placeholder="Write a comment..." />
+                <button class="btn btn-sm" onclick="addComment('${post.id}')">Comment</button>
+            </div>
+        </div>
+    `;
+}
+
+function prependPost(post) {
+    const list = document.getElementById('postsList');
+    if (!list) return;
+    const html = renderPostHtml(post);
+    // If postsList currently shows empty-state, replace it
+    if (list.querySelector('.empty-state')) {
+        list.innerHTML = html;
+    } else {
+        list.innerHTML = html + list.innerHTML;
+    }
 }
 
 function toggleMobileMenu() {
@@ -1659,4 +1888,62 @@ document.querySelectorAll('.emoji-grid')[0]?.childNodes.forEach((child, idx) => 
         });
         child.remove();
     }
+});
+
+// Mobile Quick Links / Quick Access slide-over panels
+function ensureBackdrop() {
+    let b = document.getElementById('panelBackdrop');
+    if (!b) {
+        b = document.createElement('div');
+        b.id = 'panelBackdrop';
+        b.className = 'panel-backdrop';
+        b.addEventListener('click', closePanels);
+        document.body.appendChild(b);
+    }
+    return b;
+}
+
+function closePanels() {
+    document.querySelectorAll('.sidebar, .right-sidebar').forEach(el => el.classList.remove('panel-open'));
+    const b = document.getElementById('panelBackdrop');
+    if (b) b.classList.remove('visible');
+    document.body.classList.remove('no-scroll');
+    document.body.classList.remove('panel-open-active');
+}
+
+function toggleQuickLinks() {
+    const sidebar = document.querySelector('.sidebar');
+    if (!sidebar) return;
+    const opened = sidebar.classList.toggle('panel-open');
+    const b = ensureBackdrop();
+    if (opened) {
+        b.classList.add('visible');
+        document.body.classList.add('no-scroll');
+        document.body.classList.add('panel-open-active');
+    } else {
+        b.classList.remove('visible');
+        document.body.classList.remove('no-scroll');
+        document.body.classList.remove('panel-open-active');
+    }
+}
+
+function toggleQuickAccess() {
+    const panel = document.querySelector('.right-sidebar');
+    if (!panel) return;
+    const opened = panel.classList.toggle('panel-open');
+    const b = ensureBackdrop();
+    if (opened) {
+        b.classList.add('visible');
+        document.body.classList.add('no-scroll');
+        document.body.classList.add('panel-open-active');
+    } else {
+        b.classList.remove('visible');
+        document.body.classList.remove('no-scroll');
+        document.body.classList.remove('panel-open-active');
+    }
+}
+
+// Close panels on Escape
+document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') closePanels();
 });

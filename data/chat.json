@@ -5,6 +5,10 @@
     "role": "admin",
     "message": "Hey",
     "createdAt": "2025-12-12T16:27:32.097Z",
-    "reactions": {}
+    "reactions": {
+      "👍": [
+        "deno"
+      ]
+    }
   }
 ]

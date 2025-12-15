@@ -21,7 +21,7 @@
       }
     </script>
 </head>
-<body>
+<body class="dashboard-page">
     <!-- Top Navigation -->
     <nav class="navbar" id="topNav">
         <div class="nav-brand">
@@ -58,6 +58,7 @@
         <div id="dashboardContainer" class="dashboard-container">
             <!-- Sidebar -->
             <aside class="sidebar">
+                <button class="panel-close-btn" onclick="closePanels()" aria-label="Close Quick Links">×</button>
                 <div class="sidebar-section">
                     <h3>Member Role</h3>
                     <div id="memberChurch" class="member-role-badge">Loading...</div>
@@ -233,6 +234,8 @@
                         </div>
                         <div class="new-post-form hidden" id="newPostForm">
                             <textarea id="postContent" placeholder="Share your idea or thought..." class="post-textarea"></textarea>
+                            <input type="text" id="postCaption" placeholder="Optional caption for image..." class="form-input" />
+                            <input type="file" id="postImage" accept="image/*" />
                             <input type="hidden" id="postEditId">
                             <div class="post-actions">
                                 <button class="btn btn-primary btn-sm" id="postSubmitBtn" onclick="createPost()">Post</button>
@@ -248,6 +251,7 @@
 
             <!-- Right Sidebar - Quick Access -->
             <aside class="right-sidebar">
+                <button class="panel-close-btn" onclick="closePanels()" aria-label="Close Quick Access">×</button>
                 <div class="sidebar-section">
                     <h3>⚡ Quick Access</h3>
                     <a href="game.html" class="quick-btn">Play Bible Trivia</a>
@@ -264,6 +268,10 @@
 
     <!-- Toast Notification Container -->
     <div id="notificationContainer" class="notification-container"></div>
+
+    <!-- Mobile quick toggles -->
+    <button id="quickLinksToggle" class="mobile-quick-toggle" onclick="toggleQuickLinks()" title="Quick Links">🔗</button>
+    <button id="quickAccessToggle" class="mobile-quick-toggle quick-access-toggle" onclick="toggleQuickAccess()" title="Quick Access">⚡</button>
 
     <!-- Styled Confirmation Modal -->
     <div id="confirmationModal" class="confirmation-modal hidden">
