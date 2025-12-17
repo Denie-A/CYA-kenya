@@ -71,6 +71,12 @@
                 <h1 id="dashboardHeading" class="page-heading">Dashboard</h1>
                 <!-- Tabs Section for other content -->
                 <div class="tabs-section">
+                    <div class="tabs-header">
+                        <button class="tab-btn active" data-tab="posts">📝 Posts</button>
+                        <button class="tab-btn" data-tab="tasks">📋 Tasks</button>
+                        <button class="tab-btn" data-tab="activities">🎯 Activities</button>
+                    </div>
+
                     <!-- Posts Section -->
                     <section id="posts" class="content-section active">
                         <div class="section-header">
@@ -83,7 +89,7 @@
                             <input type="file" id="postImage" accept="image/*" aria-label="Upload an image for the post" />
                             <input type="text" id="postImageAlt" placeholder="Image description (alt text)" class="form-input" aria-label="Image description for accessibility" />
                             <input type="hidden" id="postEditId">
-                            <div class="post-actions">
+                            <div class="form-actions">
                                 <button type="button" class="btn btn-primary btn-sm" id="postSubmitBtn">Post</button>
                                 <button type="button" class="btn btn-secondary btn-sm" id="cancelPostBtn">Cancel</button>
                             </div>
@@ -92,12 +98,6 @@
                             <div class="empty-state">No posts yet. Be the first to share!</div>
                         </div>
                     </section>
-
-                    <div class="tabs-header">
-                        <button class="tab-btn active" data-tab="posts">📝 Posts</button>
-                        <button class="tab-btn" data-tab="tasks">📋 Tasks</button>
-                        <button class="tab-btn" data-tab="activities">🎯 Activities</button>
-                    </div>
 
                     <!-- Tasks Section -->
                     <section id="tasks" class="content-section">
@@ -298,13 +298,6 @@
             </div>
         </div>
     </div>
-
-<button id="layoutEditToggle" class="edit-toggle-btn">✏️ Edit layout</button>
-
-<div class="layout-grid">
-  <div class="grid-widget" id="gw-1" data-col="4" data-row="2"></div>
-</div>
-
 
     <script src="js/session.js"></script>
     <script src="/socket.io/socket.io.js"></script>
