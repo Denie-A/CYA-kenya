@@ -4,13 +4,16 @@
   "description": "A secure web game app with login/signup and encrypted data storage",
   "main": "server/app.js",
   "scripts": {
-    "start": "node server/app.js",
-    "dev": "node server/app.js"
+    "start": "node server/app-sqlite.js",
+    "dev": "node server/app-sqlite.js",
+    "start:old": "node server/app.js",
+    "migrate": "node server/migrate-to-sqlite.js"
   },
   "author": "dennie-softs",
   "license": "MIT",
   "dependencies": {
     "bcryptjs": "^2.4.3",
+    "better-sqlite3": "^12.5.0",
     "body-parser": "^1.20.4",
     "compression": "^1.8.1",
     "crypto": "^1.0.1",
