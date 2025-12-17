@@ -8,11 +8,15 @@ const crypto = require('crypto');
 const http = require('http');
 const socketIo = require('socket.io');
 const compression = require('compression');
+const helmet = require('helmet');
+const rateLimit = require('express-rate-limit');
 
 const app = express();
 const server = http.createServer(app);
+const allowedOrigins = process.env.ALLOWED_ORIGINS ? process.env.ALLOWED_ORIGINS.split(',') : '*';
+
 const io = socketIo(server, {
-  cors: { origin: '*', methods: ['GET', 'POST'] },
+  cors: { origin: allowedOrigins, methods: ['GET', 'POST'] },
   transports: ['websocket', 'polling'],
   pingInterval: 25000,
   pingTimeout: 60000
@@ -78,11 +82,38 @@ app.use(compression({ level: 6, threshold: 512 }));
 
 app.use(bodyParser.json({ limit: '10mb' }));
 
+// Rate limiting (API + auth)
+const apiLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 100, standardHeaders: true, legacyHeaders: false });
+const authLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 8, message: { message: 'Too many authentication attempts, please try again later.' }, standardHeaders: true, legacyHeaders: false });
+app.use('/api/', apiLimiter);
+app.use('/api/login', authLimiter);
+app.use('/api/signup', authLimiter);
+
+// Helmet (basic) - disable CSP here to set custom policy below
+app.use(helmet({ contentSecurityPolicy: false, crossOriginResourcePolicy: false }));
+
 // Security & Performance Headers
 app.use((req, res, next) => {
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('X-Frame-Options', 'SAMEORIGIN');
   res.setHeader('X-XSS-Protection', '1; mode=block');
+  res.setHeader('Referrer-Policy', 'no-referrer-when-downgrade');
+  res.setHeader('Permissions-Policy', 'geolocation=(), microphone=(), camera=()');
+
+  if (req.secure || req.headers['x-forwarded-proto'] === 'https') {
+    res.setHeader('Strict-Transport-Security', 'max-age=63072000; includeSubDomains; preload');
+  }
+
+  next();
+});
+
+// Content Security Policy (permissive for inline handlers currently used in front-end)
+const scriptSrc = ["'self'", "'unsafe-inline'"];
+const styleSrc = ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com'];
+const imgSrc = ["'self'", 'data:'];
+const connectSrc = ["'self'", 'ws:', 'wss:'];
+app.use((req, res, next) => {
+  res.setHeader('Content-Security-Policy', `default-src 'self'; script-src ${scriptSrc.join(' ')}; style-src ${styleSrc.join(' ')}; img-src ${imgSrc.join(' ')}; connect-src ${connectSrc.join(' ')}; base-uri 'self'; manifest-src 'self'`);
   next();
 });
 

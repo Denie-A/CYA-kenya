@@ -8,13 +8,17 @@ const bodyParser = require('body-parser');
 const http = require('http');
 const socketIo = require('socket.io');
 const compression = require('compression');
+const helmet = require('helmet');
+const rateLimit = require('express-rate-limit');
 const fs = require('fs');
 const path = require('path');
 
 const app = express();
 const server = http.createServer(app);
+const allowedOrigins = process.env.ALLOWED_ORIGINS ? process.env.ALLOWED_ORIGINS.split(',') : '*';
+
 const io = socketIo(server, {
-  cors: { origin: '*', methods: ['GET', 'POST'] },
+  cors: { origin: allowedOrigins, methods: ['GET', 'POST'] },
   transports: ['websocket', 'polling'],
   pingInterval: 25000,
   pingTimeout: 60000
@@ -56,11 +60,56 @@ const MANAGEMENT_ROLES = [
 app.use(compression({ level: 6, threshold: 512 }));
 app.use(bodyParser.json({ limit: '10mb' }));
 
-// Security Headers
+// Rate limiting
+const apiLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 100, // limit each IP to 100 requests per windowMs
+  standardHeaders: true,
+  legacyHeaders: false
+});
+
+const authLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 8,
+  message: { message: 'Too many authentication attempts, please try again later.' },
+  standardHeaders: true,
+  legacyHeaders: false
+});
+
+app.use('/api/', apiLimiter);
+app.use('/api/login', authLimiter);
+app.use('/api/signup', authLimiter);
+
+// Helmet security middleware (CSP tailored for current app)
+app.use(helmet({
+  crossOriginResourcePolicy: false,
+  contentSecurityPolicy: false // set manually below to avoid blocking inline handlers for now
+}));
+
+// Additional security headers and HSTS in production
 app.use((req, res, next) => {
   res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('X-Frame-Options', 'SAMEORIGIN');
   res.setHeader('X-XSS-Protection', '1; mode=block');
+  res.setHeader('Referrer-Policy', 'no-referrer-when-downgrade');
+  res.setHeader('Permissions-Policy', 'geolocation=(), microphone=(), camera=()');
+
+  if (req.secure || req.headers['x-forwarded-proto'] === 'https') {
+    // 2 years recommended for HSTS when site is fully HTTPS
+    res.setHeader('Strict-Transport-Security', 'max-age=63072000; includeSubDomains; preload');
+  }
+
+  next();
+});
+
+// Content Security Policy (allow 'self' and inline for now; consider migrating inline handlers)
+const scriptSrc = ["'self'", "'unsafe-inline'"];
+const styleSrc = ["'self'", "'unsafe-inline'", 'https://fonts.googleapis.com'];
+const imgSrc = ["'self'", 'data:'];
+const connectSrc = ["'self'", 'ws:', 'wss:'];
+
+app.use((req, res, next) => {
+  res.setHeader('Content-Security-Policy', `default-src 'self'; script-src ${scriptSrc.join(' ')}; style-src ${styleSrc.join(' ')}; img-src ${imgSrc.join(' ')}; connect-src ${connectSrc.join(' ')}; base-uri 'self'; manifest-src 'self'`);
   next();
 });
 
