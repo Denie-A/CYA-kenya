@@ -668,6 +668,30 @@ body.no-scroll {
   opacity: .4;
 }
 
+/* Allow core floating chat/widget to remain interactive even when panels are open */
+.panel-open-active #floatingChat,
+.panel-open-active #floatingWidget,
+.panel-open-active .floating-controls {
+  pointer-events: auto;
+  opacity: 1;
+}
+
+/* Backdrop for slide-over panels (mobile) */
+.panel-backdrop {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.35);
+  z-index: 300;
+  transition: opacity 200ms ease;
+  pointer-events: none;
+}
+.panel-backdrop.visible {
+  display: block;
+  opacity: 1;
+  pointer-events: auto;
+}
+
 /* ===============================
    GRID LAYOUT EDITOR
    =============================== */

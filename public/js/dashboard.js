@@ -373,54 +373,69 @@ function initChatDragResize() {
     
     if (!header || !chat) return;
     
-    // Dragging
-    header.addEventListener('mousedown', (e) => {
-        if (e.target.closest('.chat-control-btn')) return;
-        
+    // Dragging - support mouse, touch and pointer events for mobile
+    function getClientXY(e) {
+        if (!e) return { x: 0, y: 0 };
+        if (e.touches && e.touches[0]) return { x: e.touches[0].clientX, y: e.touches[0].clientY };
+        if (e.changedTouches && e.changedTouches[0]) return { x: e.changedTouches[0].clientX, y: e.changedTouches[0].clientY };
+        return { x: e.clientX, y: e.clientY };
+    }
+
+    function startDrag(e) {
+        if (e.target.closest && e.target.closest('.chat-control-btn')) return;
+        const { x, y } = getClientXY(e);
         isDragging = true;
-        dragOffset.x = e.clientX - chat.offsetLeft;
-        dragOffset.y = e.clientY - chat.offsetTop;
-    });
-    
-    document.addEventListener('mousemove', (e) => {
+        dragOffset.x = x - chat.offsetLeft;
+        dragOffset.y = y - chat.offsetTop;
+        // prevent touch scrolling while dragging
+        if (e.type && e.type.startsWith('touch')) e.preventDefault();
+    }
+
+    function onMove(e) {
+        const { x, y } = getClientXY(e);
         if (isDragging) {
-            let x = e.clientX - dragOffset.x;
-            let y = e.clientY - dragOffset.y;
-            
-            // Boundary check
-            x = Math.max(0, Math.min(x, window.innerWidth - chat.offsetWidth));
-            y = Math.max(0, Math.min(y, window.innerHeight - chat.offsetHeight));
-            
-            chat.style.left = x + 'px';
+            let nx = x - dragOffset.x;
+            let ny = y - dragOffset.y;
+            nx = Math.max(0, Math.min(nx, window.innerWidth - chat.offsetWidth));
+            ny = Math.max(0, Math.min(ny, window.innerHeight - chat.offsetHeight));
+            chat.style.left = nx + 'px';
             chat.style.right = 'auto';
-            chat.style.top = y + 'px';
+            chat.style.top = ny + 'px';
             chat.style.bottom = 'auto';
         }
-        
+
         if (isResizing) {
-            let newWidth = e.clientX - chat.offsetLeft;
-            let newHeight = e.clientY - chat.offsetTop;
-            
-            // Min/max sizes
+            let newWidth = x - chat.offsetLeft;
+            let newHeight = y - chat.offsetTop;
             newWidth = Math.max(300, Math.min(newWidth, window.innerWidth - chat.offsetLeft - 10));
             newHeight = Math.max(350, Math.min(newHeight, window.innerHeight - chat.offsetTop - 10));
-            
             chat.style.width = newWidth + 'px';
             chat.style.height = newHeight + 'px';
         }
-    });
-    
-    document.addEventListener('mouseup', () => {
+    }
+
+    function endDrag() {
         isDragging = false;
         isResizing = false;
-    });
+    }
+
+    header.addEventListener('mousedown', startDrag);
+    header.addEventListener('touchstart', startDrag, { passive: false });
+    header.addEventListener('pointerdown', startDrag);
+
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('touchmove', onMove, { passive: false });
+    document.addEventListener('pointermove', onMove);
+
+    document.addEventListener('mouseup', endDrag);
+    document.addEventListener('touchend', endDrag);
+    document.addEventListener('pointerup', endDrag);
     
-    // Resizing
+    // Resizing - support touch/pointer
     if (resizeHandle) {
-        resizeHandle.addEventListener('mousedown', (e) => {
-            isResizing = true;
-            e.preventDefault();
-        });
+        resizeHandle.addEventListener('mousedown', (e) => { isResizing = true; e.preventDefault(); });
+        resizeHandle.addEventListener('touchstart', (e) => { isResizing = true; e.preventDefault(); }, { passive: false });
+        resizeHandle.addEventListener('pointerdown', (e) => { isResizing = true; e.preventDefault(); });
     }
 }
 
