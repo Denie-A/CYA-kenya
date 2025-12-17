@@ -492,6 +492,92 @@ app.delete('/api/announcements/:id', verifyToken, requireRole(MANAGEMENT_ROLES),
   }
 });
 
+// ==================== ADMIN ENDPOINTS ====================
+
+// Get all users (admin only)
+app.get('/api/admin/users', verifyToken, requireRole(MANAGEMENT_ROLES), (req, res) => {
+  try {
+    const users = db.prepare('SELECT id, username, role, created_at FROM users ORDER BY created_at DESC').all();
+    res.json(users);
+  } catch (err) {
+    console.error('Get users error:', err);
+    res.status(500).json({ message: 'Error fetching users' });
+  }
+});
+
+// Get all registration codes (system admin only)
+app.get('/api/admin/codes', verifyToken, requireRole([ROLES.SYSTEM_ADMIN]), (req, res) => {
+  try {
+    const codes = db.prepare('SELECT id, code, role, used, used_by, created_at FROM registration_codes ORDER BY created_at DESC').all();
+    res.json(codes);
+  } catch (err) {
+    console.error('Get codes error:', err);
+    res.status(500).json({ message: 'Error fetching codes' });
+  }
+});
+
+// Delete a registration code (system admin only)
+app.delete('/api/admin/codes/:code', verifyToken, requireRole([ROLES.SYSTEM_ADMIN]), (req, res) => {
+  try {
+    db.prepare('DELETE FROM registration_codes WHERE code = ?').run(req.params.code);
+    res.json({ message: 'Code deleted successfully' });
+  } catch (err) {
+    console.error('Delete code error:', err);
+    res.status(500).json({ message: 'Error deleting code' });
+  }
+});
+
+// Update user role (system admin only)
+app.post('/api/admin/users/:username/role', verifyToken, requireRole([ROLES.SYSTEM_ADMIN]), (req, res) => {
+  try {
+    const { role } = req.body;
+    const user = dbHelpers.getUserByUsername(req.params.username);
+    
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+    
+    dbHelpers.updateUserRole(user.id, role);
+    res.json({ message: 'User role updated successfully' });
+  } catch (err) {
+    console.error('Update role error:', err);
+    res.status(500).json({ message: 'Error updating user role' });
+  }
+});
+
+// Delete a user (system admin only)
+app.delete('/api/admin/users/:username', verifyToken, requireRole([ROLES.SYSTEM_ADMIN]), (req, res) => {
+  try {
+    const user = dbHelpers.getUserByUsername(req.params.username);
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+    
+    db.prepare('DELETE FROM users WHERE id = ?').run(user.id);
+    res.json({ message: 'User deleted successfully' });
+  } catch (err) {
+    console.error('Delete user error:', err);
+    res.status(500).json({ message: 'Error deleting user' });
+  }
+});
+
+// Adjust user balance (stub)
+app.post('/api/admin/users/:username/balance', verifyToken, requireRole(MANAGEMENT_ROLES), (req, res) => {
+  try {
+    const { action, amount } = req.body;
+    const user = dbHelpers.getUserByUsername(req.params.username);
+    
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+    
+    res.json({ message: 'Balance adjustment received (stub - not yet implemented for SQLite)' });
+  } catch (err) {
+    console.error('Balance update error:', err);
+    res.status(500).json({ message: 'Error updating balance' });
+  }
+});
+
 // ==================== SOCKET.IO EVENTS ====================
 
 io.on('connection', (socket) => {

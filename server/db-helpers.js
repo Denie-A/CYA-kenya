@@ -42,6 +42,11 @@ function createUser(username, hashedPassword, role = 'general') {
     }
 }
 
+// Get all users
+function getAllUsers() {
+    return db.prepare('SELECT id, username, role, church, created_at FROM users ORDER BY created_at DESC').all();
+}
+
 // Update user role
 function updateUserRole(userId, role) {
     const stmt = db.prepare('UPDATE users SET role = ? WHERE id = ?');
@@ -246,6 +251,7 @@ async function verifyPassword(password, hash) {
 module.exports = {
     // Users
     findOrCreateUser,
+    getAllUsers,
     getUserByUsername,
     getUserById,
     createUser,
