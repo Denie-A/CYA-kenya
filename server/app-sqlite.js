@@ -492,6 +492,80 @@ app.delete('/api/announcements/:id', verifyToken, requireRole(MANAGEMENT_ROLES),
   }
 });
 
+// ==================== PASSWORD RESET ENDPOINTS ====================
+
+// Helper to generate default password
+function generateDefaultPassword(username) {
+  const randomNum = Math.floor(10000 + Math.random() * 90000);
+  return `${username}@${randomNum}`;
+}
+
+// Request password reset (public)
+app.post('/api/password-reset-request', (req, res) => {
+  try {
+    const { username } = req.body;
+    if (!username) {
+      return res.status(400).json({ message: 'Username required' });
+    }
+    
+    const user = dbHelpers.getUserByUsername(username);
+    if (!user) {
+      return res.status(404).json({ message: 'Username not found' });
+    }
+    
+    // Store reset request in memory with expiry
+    if (!global.passwordResetRequests) global.passwordResetRequests = {};
+    
+    global.passwordResetRequests[username] = {
+      username,
+      requestedAt: new Date().toISOString(),
+      expiryTime: Date.now() + (5 * 60 * 1000) // 5 minutes
+    };
+    
+    res.json({ message: 'Password reset request sent. Admin will generate temporary password.' });
+  } catch (err) {
+    console.error('Password reset request error:', err);
+    res.status(500).json({ message: 'Error processing reset request' });
+  }
+});
+
+// Get temporary password for user (public)
+app.post('/api/get-temp-password', (req, res) => {
+  try {
+    const { username } = req.body;
+    if (!username) {
+      return res.status(400).json({ message: 'Username required' });
+    }
+    
+    const user = dbHelpers.getUserByUsername(username);
+    if (!user) {
+      return res.status(404).json({ message: 'Username not found' });
+    }
+    
+    // Check if temp password exists in memory
+    if (!global.tempPasswords) global.tempPasswords = {};
+    const tempData = global.tempPasswords[username];
+    
+    if (!tempData) {
+      return res.status(404).json({ message: 'No temporary password available. Contact admin.' });
+    }
+    
+    if (Date.now() > tempData.expiryTime) {
+      delete global.tempPasswords[username];
+      return res.status(410).json({ message: 'Temporary password expired. Request a new reset.' });
+    }
+    
+    const remainingSeconds = Math.floor((tempData.expiryTime - Date.now()) / 1000);
+    res.json({
+      tempPassword: tempData.tempPassword,
+      remainingSeconds
+    });
+  } catch (err) {
+    console.error('Get temp password error:', err);
+    res.status(500).json({ message: 'Error retrieving password' });
+  }
+});
+
 // ==================== ADMIN ENDPOINTS ====================
 
 // Get all users (admin only)
@@ -575,6 +649,63 @@ app.post('/api/admin/users/:username/balance', verifyToken, requireRole(MANAGEME
   } catch (err) {
     console.error('Balance update error:', err);
     res.status(500).json({ message: 'Error updating balance' });
+  }
+});
+
+// Auto-reset user password with temporary password (admin only)
+app.post('/api/admin/users/:username/auto-reset', verifyToken, requireRole(MANAGEMENT_ROLES), async (req, res) => {
+  try {
+    const { username } = req.params;
+    const user = dbHelpers.getUserByUsername(username);
+    
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+    
+    // Generate temporary password
+    const tempPassword = generateDefaultPassword(username);
+    const hashedPassword = await dbHelpers.hashPassword(tempPassword);
+    const expiryTime = Date.now() + (10 * 60 * 1000); // 10 minutes
+    
+    // Update user password in database
+    db.prepare('UPDATE users SET password = ? WHERE id = ?').run(hashedPassword, user.id);
+    
+    // Store temp password in memory for retrieval
+    if (!global.tempPasswords) global.tempPasswords = {};
+    global.tempPasswords[username] = {
+      tempPassword,
+      expiryTime
+    };
+    
+    res.json({
+      message: `Temporary password generated for ${username}`,
+      tempPassword,
+      expiryTime
+    });
+  } catch (err) {
+    console.error('Auto-reset error:', err);
+    res.status(500).json({ message: 'Error resetting password' });
+  }
+});
+
+// Get pending password resets (admin only)
+app.get('/api/admin/password-resets', verifyToken, requireRole(MANAGEMENT_ROLES), (req, res) => {
+  try {
+    if (!global.passwordResetRequests) global.passwordResetRequests = {};
+    
+    const now = Date.now();
+    const resetNeeded = Object.entries(global.passwordResetRequests)
+      .filter(([_, req]) => req.expiryTime > now)
+      .map(([username, req]) => ({
+        username,
+        requestedAt: req.requestedAt,
+        secondsRemaining: Math.ceil((req.expiryTime - now) / 1000)
+      }));
+    
+    res.json({ users: resetNeeded });
+  } catch (err) {
+    console.error('Get password resets error:', err);
+    res.status(500).json({ message: 'Error retrieving reset requests' });
   }
 });
 
